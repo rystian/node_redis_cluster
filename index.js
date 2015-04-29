@@ -65,8 +65,8 @@ function connectToNodesOfCluster (firstLink, callback) {
     while (n--) {
       var items = lines[n].split(' ');
       var name = items[0];
+      var link = items[1];
       var flags = items[2];
-      var link = ( flags === 'myself' || flags === 'myself,master' || flags === 'myself,slave') ? firstLink : items[1];
       if(flags === 'slave' || flags === 'myself,slave') {
           if (n === 0) {
             callback(err, redisLinks);
