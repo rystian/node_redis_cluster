@@ -1,9 +1,6 @@
 var redis = require('redis');
 var events = require('events');
 var fastRedis = null;
-try {
-  fastRedis = require('redis-fast-driver');
-} catch(e) {}
 
 var Client = require('./Client');
 var redisClusterSlot = require('./redisClusterSlot');
@@ -12,32 +9,12 @@ var commands = require('./lib/commands');
 var connectToLink = function(str, auth, options) {
   var spl = str.split(':');
   options = options || {};
-  if (auth) {
-    if(fastRedis) {
-        var link =new fastRedis({
-          host: spl[0],
-          port: spl[1],
-          auth: auth
-        });
-        link.on('error', function onErrorFromRedisDriver(err){
-          console.log('error from redis driver %s:', str, err);
-        });
-        return link;
-    }
-    return (redis.createClient(spl[1], spl[0], options).auth(auth));
-  } else {
-    if(fastRedis) {
-      var link =new fastRedis({
-        host: spl[0],
-        port: spl[1]
-      });
-      link.on('error', function onErrorFromRedisDriver(err){
-        console.log('error from redis driver %s:', str, err);
-      });
-      return link;
-    }
-    return (redis.createClient(spl[1], spl[0], options));
-  }
+
+  var c = redis.createClient(spl[1], spl[0], options);
+  if (auth)
+    c = c.auth(auth);
+
+  return c;
 };
 
 /*
@@ -48,9 +25,7 @@ var connectToLink = function(str, auth, options) {
 function connectToNodesOfCluster (firstLink, callback) {
   var redisLinks = [];
   var fireStarter = connectToLink(firstLink);
-  var clusterFn = fastRedis ? function(subcommand, cb) {
-    fireStarter.rawCall(['cluster', subcommand], cb);
-  } : fireStarter.cluster.bind(fireStarter);
+  var clusterFn = fireStarter.cluster.bind(fireStarter);
   clusterFn('nodes', function(err, nodes) {
     if(err && err.indexOf('cluster support disabled') !== -1) {
       err = null;
@@ -161,25 +136,6 @@ function bindCommands (nodes, oldClient) {
         var o_callback;
         var lastusednode;
         
-        //Array.indexOf used for any other special functions that needs to be converted to something else
-        if(fastRedis && ['hmset'].indexOf(command) !== -1) {
-          //special functions
-          if(command === 'hmset') {
-            if(typeof arguments[1] === 'object') {
-              // making from a
-              //   redis.hmset('a', {a:1,b:2,c:3}, cb)
-              // a
-              //   redis.hmset('a', 'a', 1, 'b', 2, 'c', 3, cb);
-              var tmp = [1,1];
-              for(var k in arguments[1]) {
-                tmp.push(k);
-                tmp.push(arguments[1][k]);
-              }
-              Array.prototype.splice.apply(o_arguments, tmp);
-            }
-          }
-        }
-        
         // Taken from code in node-redis.
         var last_arg_type = typeof o_arguments[o_arguments.length - 1];
 
@@ -216,11 +172,7 @@ function bindCommands (nodes, oldClient) {
                 }
               }
               if(node) {
-                if(fastRedis) {
-                  node.link.rawCall(['ASKING'], function(){});
-                } else {
-                  node.link.send_command('ASKING', [], function(){});
-                }
+                node.link.send_command('ASKING', [], function(){});
                 return callNode(node, true);
               }
               if(o_callback)
@@ -240,7 +192,7 @@ function bindCommands (nodes, oldClient) {
           }
           if(o_callback)
             o_callback(e, data);
-        };
+        }
         
         function clusterTopologyChanged(firstLink, cb) {
           //console.log('clusterTopologyChanged');
@@ -272,40 +224,9 @@ function bindCommands (nodes, oldClient) {
         
         throw new Error('slot '+slot+' found on no nodes');
         
-        function callNode(node, argumentsAlreadyFixed) {
-          // console.log('callNode',node);
+        function callNode(node) {
           lastusednode = node;
-          if(fastRedis) {
-            if(!argumentsAlreadyFixed) o_arguments.unshift(command);
-            if(command === 'hgetall') {
-              node.link.rawCall(o_arguments, function(e, d){
-                if(e) return callback(e);
-                if(!Array.isArray(d) || d.length < 1)
-                  return callback(e, d);
-                var obj = {};
-                for(var i=0;i<d.length;i+=2) {
-                  obj[d[i]] = d[i+1];
-                }
-                callback(e, obj);
-              });
-              return;
-            }
-            if(command === 'hmget') {
-              node.link.rawCall(o_arguments, function(e, d){
-                if(e)
-                  return callback(e);
-                var obj = {};
-                for(var i=0;i<d.length;i++) {
-                  obj[o_arguments[i+2]] = d[i];
-                }
-                callback(e, obj);
-              });
-              return;
-            }
-            node.link.rawCall(o_arguments, callback);
-            return;
-          }
-          node.link.send_command(command, o_arguments, callback);
+          node.link[command].apply(node.link, o_arguments.concat([callback]));
         }
       };
     })(commands[c]);
