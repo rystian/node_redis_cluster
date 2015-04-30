@@ -1,6 +1,4 @@
 var redis = require('redis');
-var events = require('events');
-var fastRedis = null;
 
 var Client = require('./Client');
 var redisClusterSlot = require('./redisClusterSlot');
@@ -86,47 +84,16 @@ function connectToNodesOfCluster (firstLink, callback) {
   });
 }
 
-/*
-  Connect to all the nodes that form a cluster. Takes an array in the form of
-  [
-    {name: "node1", link: "127.0.0.1:6379", slots: [0, 8192], auth: foobared},
-    {name: "node2", link: "127.0.0.1:7379", slots: [8193, 16384], auth:foobared},
-  ]
-
-  *auth is optional
-
-  You decide the allocation of the 4096 slots, but they must be all covered, and
-  if you decide to add/remove a node from the "cluster", don't forget to MIGRATE
-  the keys accordingly to the new slots allocation.
-
-*/
-function connectToNodes (cluster) {
-  var redisLinks = [];
-  var n = cluster.length;
-  while (n--) {
-    var node = cluster[n];
-    var options = node.options || {};
-    redisLinks.push({
-      name: node.name,
-      link: connectToLink(node.link, node.auth, options),
-      slots: node.slots
-    });
-  }
-  return (redisLinks);
-}
-
 function bindCommands (nodes, oldClient) {
   var client = oldClient || new Client();
   client.nodes = nodes;
   //catch on error from nodes
   function onError(err) {
-    console.log('got error from ', this);
     client.emit('error', err);
   }
   for(var i=0;i<nodes.length;i++) {
     nodes[i].link.on('error', onError.bind(nodes[i]));
   }
-  var n = nodes.length;
   var c = commands.length;
   while (c--) {
     (function (command) {
@@ -159,7 +126,7 @@ function bindCommands (nodes, oldClient) {
             if(e.toString().substr(0, 3)==='ASK') {
               if(redirections++ > 5) {
                 if(o_callback)
-                  o_callback('Too much redirections');
+                  o_callback(new Error('Too much redirections'));
                 return;
               }
               //console.log('ASK redirection')
@@ -176,15 +143,19 @@ function bindCommands (nodes, oldClient) {
                 return callNode(node, true);
               }
               if(o_callback)
-                o_callback('Requested node for redirection not found `%s`', connectStr);
+                o_callback(new Error('Requested node for redirection not found `' + connectStr + '`'));
               return;
             } else if(e.toString().substr(0, 5) === 'MOVED') {
               //MOVED error example: MOVED 12182 127.0.0.1:7002
               //this is our trigger when cluster topology is changed
-              //console.log('got MOVED');
-              clusterTopologyChanged(lastusednode.connectStr,function(e){
+              reconnectClient(lastusednode.connectStr, client, function(err, newClient) {
+                if (err) {
+                  if (o_callback)
+                    o_callback(err);
+                  return;
+                }
+                client = newClient;
                 //repeat command
-                //console.log('repeat command', orig_arguments);
                 client[command].apply(client, orig_arguments);
               });
               return;
@@ -192,22 +163,6 @@ function bindCommands (nodes, oldClient) {
           }
           if(o_callback)
             o_callback(e, data);
-        }
-        
-        function clusterTopologyChanged(firstLink, cb) {
-          //console.log('clusterTopologyChanged');
-          if(module.exports.clusterClient.redisLinks) {
-            module.exports.clusterClient.redisLinks.forEach(function(node){
-              node.link.end();
-            });
-          }
-          module.exports.clusterClient.redisLinks = null;
-          connectToNodesOfCluster(firstLink, function (err, newNodes) {
-            //console.log('reconnected');
-            module.exports.clusterClient.redisLinks = newNodes;
-            client = bindCommands(newNodes, client);
-            cb(err);
-          });
         }
         
         var i = nodes.length;
@@ -221,8 +176,18 @@ function bindCommands (nodes, oldClient) {
             }
           }
         }
-        
-        throw new Error('slot '+slot+' found on no nodes');
+
+        if (o_callback)
+          o_callback(new Error('slot '+slot+' found on no nodes'));
+
+        // unable to find node for slot so we reconnect
+        reconnectClient(client.fireStarter, client, function(err, newClient) {
+          if (err) {
+            client.emit('error', err);
+            return;
+          }
+          client = newClient;
+        });
         
         function callNode(node) {
           lastusednode = node;
@@ -234,20 +199,28 @@ function bindCommands (nodes, oldClient) {
   return(client);
 }
 
+function reconnectClient(firstLink, client, callback) {
+  if (typeof client === 'function') {
+    callback = client;
+    client = null;
+  }
+
+  if (client && client.nodes) {
+    client.nodes.forEach(function(node) {
+      node.link.end();
+    })
+  }
+
+  connectToNodesOfCluster(firstLink, function (err, nodes) {
+    if(err) return callback(err);
+    client = bindCommands(nodes, client);
+    client.fireStarter = firstLink;
+    callback(null, client);
+  });
+}
+
 module.exports = {
     clusterClient : {
-      redisLinks: null,
-      clusterInstance: function (firstLink, callback) {
-        connectToNodesOfCluster(firstLink, function (err, nodes) {
-          if(err) {
-            return callback(err);
-          }
-          module.exports.clusterClient.redisLinks = nodes;
-          callback(err, bindCommands(nodes));
-        });
-      }
-    },
-    poorMansClusterClient : function (cluster) {
-      return bindCommands(connectToNodes(cluster));
+      clusterInstance: reconnectClient
     }
 };
