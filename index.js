@@ -90,7 +90,7 @@ function bindCommands (nodes, oldClient) {
   //catch on error from nodes
   function onError(err) {
     client.emit('error', err);
-    var base_wait = 1000;
+    var base_wait = 5000;
 
     if (err && err.toString().indexOf("ECONNREFUSED") >= 0) {
       var retries = 0;
