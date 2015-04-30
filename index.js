@@ -90,6 +90,27 @@ function bindCommands (nodes, oldClient) {
   //catch on error from nodes
   function onError(err) {
     client.emit('error', err);
+    var base_wait = 1000;
+
+    if (err && err.toString().indexOf("ECONNREFUSED") >= 0) {
+      var retries = 0;
+      var wait = base_wait;
+      recover();
+    }
+
+    function recover() {
+      console.error('Got ECONNREFUSED, reconnecting in ' + wait + ' ms');
+      setTimeout(function() {
+        reconnectClient(client.fireStarter, client, function(err, newClient) {
+          if (err) {
+            wait = Math.min(30000, base_wait * Math.pow(2, ++retries));
+            recover();
+            return;
+          }
+          client = newClient;
+        });
+      }, wait);
+    }
   }
   for(var i=0;i<nodes.length;i++) {
     nodes[i].link.on('error', onError.bind(nodes[i]));
