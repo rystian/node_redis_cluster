@@ -266,9 +266,7 @@ Client.prototype.bind = function() {
     }
 
     function recover() {
-      console.error('Got ECONNREFUSED, reconnecting in ' + wait + ' ms');
       setTimeout(function() {
-        console.log('debug: reconnecting');
         self.connect(function (err) {
           if (err) {
             wait = Math.min(30000, base_wait * Math.pow(2, ++retries));
