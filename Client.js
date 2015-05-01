@@ -134,15 +134,6 @@ Client.prototype.discover = function (cb) {
 Client.prototype.bind = function() {
   var self = this;
 
-  self.nodes.forEach(function(node) {
-    try {
-      node.link.on('error', onError.bind(node));
-    } catch (e) {
-      console.error('error listening for errors on link');
-      console.error(e);
-    }
-  });
-
   var c = commands.length;
   while (c--) {
     (function (command) {
@@ -250,28 +241,6 @@ Client.prototype.bind = function() {
       };
     })(commands[c]);
   }
-
-  function onError(err) {
-    self.emit('error', err);
-    var base_wait = 1000;
-
-    if (err && err.toString().indexOf("ECONNREFUSED") >= 0 && !self.reconnecting) {
-      var retries = 0;
-      var wait = base_wait;
-      recover();
-    }
-
-    function recover() {
-      setTimeout(function() {
-        self.connect(function (err) {
-          if (err) {
-            wait = Math.min(30000, base_wait * Math.pow(2, ++retries));
-            recover();
-          }
-        });
-      }, wait);
-    }
-  }
 };
 
 function connectToLink(str, client, options) {
@@ -280,15 +249,35 @@ function connectToLink(str, client, options) {
 
   try {
     var c = redis.createClient(spl[1], spl[0], options);
-    c.on('error', function(err) {
-      client.emit('error', err);
-    });
+    c.on('error', onError);
   } catch (e) {
     console.error('error creating client');
     console.error(e);
   }
 
   return c;
+
+  function onError(err) {
+    client.emit('error', err);
+    var base_wait = 1000;
+
+    if (err && err.toString().indexOf("ECONNREFUSED") >= 0 && !client.reconnecting) {
+      var retries = 0;
+      var wait = base_wait;
+      recover();
+    }
+
+    function recover() {
+      setTimeout(function() {
+        client.connect(function (err) {
+          if (err) {
+            wait = Math.min(30000, base_wait * Math.pow(2, ++retries));
+            recover();
+          }
+        });
+      }, wait);
+    }
+  }
 }
 
 module.exports = Client;
