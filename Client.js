@@ -146,7 +146,12 @@ Client.prototype.bind = function() {
   var self = this;
 
   self.nodes.forEach(function(node) {
-    node.link.on('error', onError.bind(node));
+    try {
+      node.link.on('error', onError.bind(node));
+    } catch (e) {
+      console.log('error listening for errors on link');
+      console.log(e);
+    }
   });
 
   var c = commands.length;
@@ -192,7 +197,12 @@ Client.prototype.bind = function() {
 
         function callNode(node) {
           last_used_node = node;
-          node.link[command].apply(node.link, o_arguments.concat([callback]));
+          try {
+            node.link[command].apply(node.link, o_arguments.concat([callback]));
+          } catch (e) {
+            console.log('error sending command to link');
+            console.log(e);
+          }
         }
 
         function callback(err, data){
@@ -219,7 +229,12 @@ Client.prototype.bind = function() {
                 }
               }
               if(node) {
-                node.link.send_command('ASKING', [], function(){});
+                try {
+                  node.link.send_command('ASKING', [], function(){});
+                } catch (e) {
+                  console.log('error asking link');
+                  console.log(e);
+                }
                 return callNode(node, true);
               }
               if(o_callback)
@@ -281,7 +296,7 @@ function connectToLink(str, auth, options) {
     if (auth)
       c = c.auth(auth);
   } catch (e) {
-    console.log('error creating client')
+    console.log('error creating client');
     console.log(e);
   }
 
