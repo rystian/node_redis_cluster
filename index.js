@@ -8,17 +8,10 @@ var connectToLink = function(str, auth, options) {
   var spl = str.split(':');
   options = options || {};
 
-  try {
-    var c = redis.createClient(spl[1], spl[0], options);
-    if (auth)
-      c = c.auth(auth);
-  }
-  catch (e) {
-    console.log('its happening here!');
-    console.log(e);
-    console.log(e.stack);
-  }
-  
+  var c = redis.createClient(spl[1], spl[0], options);
+  if (auth)
+    c = c.auth(auth);
+
   return c;
 };
 
