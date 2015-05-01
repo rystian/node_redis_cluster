@@ -10,6 +10,7 @@ function Client(discovery_address) {
   EventEmitter.call(this);
 
   this.discovery_address = discovery_address;
+  this.connection_cache = {};
 }
 util.inherits(Client, EventEmitter);
 
@@ -37,21 +38,6 @@ Client.prototype.connect = function (cb) {
   }
 };
 
-Client.prototype.reconnect = function (cb) {
-  var self = this;
-  if (self.nodes) {
-    self.nodes.forEach(function(node) {
-      try {
-        node.link.end();
-      } catch (e) {
-        console.log('death hurts');
-        console.log(e);
-      }
-    })
-  }
-  self.connect(cb);
-};
-
 Client.prototype.getSlot = function (key) {
   if (!key) return;
   return hashSlot(key);
@@ -76,11 +62,13 @@ Client.prototype.discover = function (cb) {
   var fire_starter = connectToLink(self.discovery_address);
 
   fire_starter.on('error', function(err) {
-    console.log('debug: fix me');
     self.emit('error', err);
   });
 
   fire_starter.cluster('nodes', function(err, nodes) {
+    // disconnect from fire starter
+    fire_starter.quit();
+
     // workaround which allows redis-cluster to work when not in cluster mode
     if(err && err.indexOf('cluster support disabled') !== -1) {
       err = null;
@@ -101,13 +89,14 @@ Client.prototype.discover = function (cb) {
       var flags = items[2];
       var state = items[7];
 
-      // don't connect to slaves
-      if (flags === 'slave' || flags === 'myself,slave') {
+      // don't connect to nodes that are not connected to the cluster
+      if (state !== 'connected') {
+        self.connection_cache[link] = null;
         continue;
       }
 
-      // don't connect to nodes that are not connected to the cluster
-      if (state !== 'connected') {
+      // don't connect to slaves
+      if (flags === 'slave' || flags === 'myself,slave') {
         continue;
       }
 
@@ -130,10 +119,14 @@ Client.prototype.discover = function (cb) {
         }
       }
 
+      var conn = self.connection_cache[link];
+      if (!conn)
+        conn = (self.connection_cache[link] = connectToLink(link));
+
       self.nodes.push({
         name: name,
         connectStr: link,
-        link: connectToLink(link),
+        link: conn,
         slots: slots
       });
     }
@@ -149,8 +142,8 @@ Client.prototype.bind = function() {
     try {
       node.link.on('error', onError.bind(node));
     } catch (e) {
-      console.log('error listening for errors on link');
-      console.log(e);
+      console.error('error listening for errors on link');
+      console.error(e);
     }
   });
 
@@ -189,7 +182,7 @@ Client.prototype.bind = function() {
           o_callback(new Error('slot '+slot+' found on no nodes'));
 
         // unable to find node for slot so we reconnect
-        self.reconnect(function(err) {
+        self.connect(function(err) {
           if (err) {
             self.emit('error', err);
           }
@@ -200,8 +193,8 @@ Client.prototype.bind = function() {
           try {
             node.link[command].apply(node.link, o_arguments.concat([callback]));
           } catch (e) {
-            console.log('error sending command to link');
-            console.log(e);
+            console.error('error sending command to link');
+            console.error(e);
           }
         }
 
@@ -232,8 +225,8 @@ Client.prototype.bind = function() {
                 try {
                   node.link.send_command('ASKING', [], function(){});
                 } catch (e) {
-                  console.log('error asking link');
-                  console.log(e);
+                  console.error('error asking link');
+                  console.error(e);
                 }
                 return callNode(node, true);
               }
@@ -243,7 +236,7 @@ Client.prototype.bind = function() {
             } else if(err.toString().substr(0, 5) === 'MOVED') {
               //MOVED error example: MOVED 12182 127.0.0.1:7002
               //this is our trigger when cluster topology is changed
-              self.reconnect(function(err) {
+              self.connect(function(err) {
                 if (err) {
                   if (o_callback)
                     o_callback(err);
@@ -276,7 +269,7 @@ Client.prototype.bind = function() {
       console.error('Got ECONNREFUSED, reconnecting in ' + wait + ' ms');
       setTimeout(function() {
         console.log('debug: reconnecting');
-        self.reconnect(function (err) {
+        self.connect(function (err) {
           if (err) {
             wait = Math.min(30000, base_wait * Math.pow(2, ++retries));
             recover();
@@ -296,8 +289,8 @@ function connectToLink(str, auth, options) {
     if (auth)
       c = c.auth(auth);
   } catch (e) {
-    console.log('error creating client');
-    console.log(e);
+    console.error('error creating client');
+    console.error(e);
   }
 
   return c;
