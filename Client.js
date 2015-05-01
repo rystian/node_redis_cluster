@@ -21,7 +21,7 @@ Client.prototype.connect = function (cb) {
   if (self.connecting) return;
 
   self.connecting = true;
-  self.discoverTopology(function (err) {
+  self.discover(function (err) {
     self.connecting = false;
     if (err) return callback(err);
     self.bind();
@@ -65,10 +65,16 @@ Client.prototype.getNode = function (key) {
   }
 };
 
-Client.prototype.discoverTopology = function (cb) {
+Client.prototype.discover = function (cb) {
   var self = this;
   self.nodes = [];
   var fire_starter = connectToLink(self.discovery_address);
+
+  fire_starter.on('error', function(err) {
+    console.log('debug: fix me');
+    self.emit('error', err);
+  });
+
   fire_starter.cluster('nodes', function(err, nodes) {
     // workaround which allows redis-cluster to work when not in cluster mode
     if(err && err.indexOf('cluster support disabled') !== -1) {
