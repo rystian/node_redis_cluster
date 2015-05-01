@@ -59,11 +59,7 @@ Client.prototype.getNode = function (key) {
 Client.prototype.discover = function (cb) {
   var self = this;
   self.nodes = [];
-  var fire_starter = connectToLink(self.discovery_address);
-
-  fire_starter.on('error', function(err) {
-    self.emit('error', err);
-  });
+  var fire_starter = connectToLink(self.discovery_address, self);
 
   fire_starter.cluster('nodes', function(err, nodes) {
     // disconnect from fire starter
@@ -121,7 +117,7 @@ Client.prototype.discover = function (cb) {
 
       var conn = self.connection_cache[link];
       if (!conn)
-        conn = (self.connection_cache[link] = connectToLink(link));
+        conn = (self.connection_cache[link] = connectToLink(link, self));
 
       self.nodes.push({
         name: name,
@@ -278,14 +274,15 @@ Client.prototype.bind = function() {
   }
 };
 
-function connectToLink(str, auth, options) {
+function connectToLink(str, client, options) {
   var spl = str.split(':');
   options = options || {};
 
   try {
     var c = redis.createClient(spl[1], spl[0], options);
-    if (auth)
-      c = c.auth(auth);
+    c.on('error', function(err) {
+      client.emit('error', err);
+    });
   } catch (e) {
     console.error('error creating client');
     console.error(e);
