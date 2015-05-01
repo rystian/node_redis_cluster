@@ -41,7 +41,12 @@ Client.prototype.reconnect = function (cb) {
   var self = this;
   if (self.nodes) {
     self.nodes.forEach(function(node) {
-      node.link.end();
+      try {
+        node.link.end();
+      } catch (e) {
+        console.log('death hurts');
+        console.log(e);
+      }
     })
   }
   self.connect(cb);
@@ -271,9 +276,14 @@ function connectToLink(str, auth, options) {
   var spl = str.split(':');
   options = options || {};
 
-  var c = redis.createClient(spl[1], spl[0], options);
-  if (auth)
-    c = c.auth(auth);
+  try {
+    var c = redis.createClient(spl[1], spl[0], options);
+    if (auth)
+      c = c.auth(auth);
+  } catch (e) {
+    console.log('error creating client')
+    console.log(e);
+  }
 
   return c;
 }
