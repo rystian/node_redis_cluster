@@ -246,7 +246,7 @@ Client.prototype.bind = function() {
     self.emit('error', err);
     var base_wait = 1000;
 
-    if (err && err.toString().indexOf("ECONNREFUSED") >= 0 && !client.reconnecting) {
+    if (err && err.toString().indexOf("ECONNREFUSED") >= 0 && !self.reconnecting) {
       var retries = 0;
       var wait = base_wait;
       recover();
