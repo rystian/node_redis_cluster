@@ -8,10 +8,17 @@ var connectToLink = function(str, auth, options) {
   var spl = str.split(':');
   options = options || {};
 
-  var c = redis.createClient(spl[1], spl[0], options);
-  if (auth)
-    c = c.auth(auth);
-
+  try {
+    var c = redis.createClient(spl[1], spl[0], options);
+    if (auth)
+      c = c.auth(auth);
+  }
+  catch (e) {
+    console.log('its happening here!');
+    console.log(e);
+    console.log(e.stack);
+  }
+  
   return c;
 };
 
@@ -90,9 +97,10 @@ function bindCommands (nodes, oldClient) {
   //catch on error from nodes
   function onError(err) {
     client.emit('error', err);
-    var base_wait = 5000;
+    var base_wait = 1000;
 
-    if (err && err.toString().indexOf("ECONNREFUSED") >= 0) {
+    if (err && err.toString().indexOf("ECONNREFUSED") >= 0 && !client.reconnecting) {
+      client.reconnecting = true;
       var retries = 0;
       var wait = base_wait;
       recover();
@@ -108,6 +116,7 @@ function bindCommands (nodes, oldClient) {
             return;
           }
           client = newClient;
+          client.reconnecting = false;
         });
       }, wait);
     }
