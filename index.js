@@ -4,7 +4,10 @@ module.exports = {
   clusterClient : {
     clusterInstance: function(discovery_address, cb) {
       var client = new Client(discovery_address);
-      client.connect(cb);
+      client.connect(function(err) {
+        if (err) return cb(err);
+        cb(null, client);
+      });
     }
   }
 };
