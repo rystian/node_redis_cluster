@@ -40,6 +40,14 @@ Client.prototype.connect = function (cb) {
 
 Client.prototype.getSlot = function (key) {
   if (!key) return;
+  //code taken from koyoki/redis-party
+  var s = key.indexOf("{");
+  if (s !== -1) {
+    var e = key.indexOf("}", s + 1);
+    if (e > s + 1) {
+      key = key.substring(s + 1, e);
+    }
+  }
   return hashSlot(key);
 };
 
@@ -59,6 +67,8 @@ Client.prototype.getNode = function (key) {
 Client.prototype.discover = function (cb) {
   var self = this;
   self.nodes = [];
+  var numNodesReady = 0;
+  var numNodesToConnect = 0;
   var fire_starter = connectToLink(self.discovery_address, self);
 
   fire_starter.cluster('nodes', function(err, nodes) {
@@ -95,7 +105,7 @@ Client.prototype.discover = function (cb) {
       if (flags === 'slave' || flags === 'myself,slave') {
         continue;
       }
-
+      numNodesToConnect++;
       // parse slots
       var slots = [];
       if (lines.length === 1) {
@@ -113,30 +123,48 @@ Client.prototype.discover = function (cb) {
           var t = items[i].split('-');
           slots.push(Number(t[0]), Number(t[1]));
         }
-      }
-
-      var conn = self.connection_cache[link];
-      if (!conn)
-        conn = (self.connection_cache[link] = connectToLink(link, self));
 
       self.nodes.push({
         name: name,
         connectStr: link,
-        link: conn,
+        link: {},
         slots: slots
       });
     }
+    }
 
-    cb();
+    numNodesToConnect = self.nodes.length;
+    for (var i = 0; i < numNodesToConnect; i++) {
+      var connStr = self.nodes[i].connectStr;
+      var conn = self.connection_cache[connStr];
+      if (!conn) {
+        conn = (self.connection_cache[connStr] = connectToLink(connStr, self));
+        self.nodes[i].link = conn;
+        conn.on('ready', function () {
+          checkReady();
+        });
+      } else {
+        self.nodes[i].link = conn;
+        checkReady();
+      }
+    }
+
+    function checkReady() {
+      numNodesReady++;
+      if (numNodesReady === numNodesToConnect) cb();
+    }
+
   });
 };
 
 Client.prototype.bind = function() {
   var self = this;
-
   var c = commands.length;
   while (c--) {
     (function (command) {
+      if (command === "multi" || command === "exec") {
+        return;
+      }
       self[command] = function () {
         var o_arguments = Array.prototype.slice.call(arguments);
         var orig_arguments = Array.prototype.slice.call(arguments);
@@ -193,7 +221,7 @@ Client.prototype.bind = function() {
             // ASK error example: ASK 12182 127.0.0.1:7001
             // When we got ASK error, we need just repeat a request on right node with ASKING command
             // If after ASK we got MOVED err, thats mean no key found
-            if(err.toString().substr(0, 3)==='ASK') {
+            if (err.toString().substr(7, 3) === 'ASK') {
               if(redirections++ > 5) {
                 if(o_callback)
                   o_callback(new Error('Too much redirections'));
@@ -220,7 +248,7 @@ Client.prototype.bind = function() {
               if(o_callback)
                 o_callback(new Error('Requested node for redirection not found `' + connectStr + '`'));
               return;
-            } else if(err.toString().substr(0, 5) === 'MOVED') {
+            } else if (err.toString().substr(7, 5) === 'MOVED') {
               //MOVED error example: MOVED 12182 127.0.0.1:7002
               //this is our trigger when cluster topology is changed
               self.connect(function(err) {
@@ -242,6 +270,13 @@ Client.prototype.bind = function() {
     })(commands[c]);
   }
 };
+
+//Multi operation only support for the same slot
+Client.prototype.multi = function (key, args) {
+  var node = this.getNode(key);
+  console.log('Using node server ' + node.connectStr);
+  return node.link.multi.apply(node.link, args);
+}
 
 function connectToLink(str, client, options) {
   var spl = str.split(':');
