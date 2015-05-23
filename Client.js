@@ -3,7 +3,7 @@ var util = require('util');
 
 var redis = require('redis');
 
-var hashSlot = require('./hashSlot');
+var hashSlot = require('./lib/hashSlot');
 var commands = require('./lib/commands');
 
 function Client(discovery_address) {
@@ -50,6 +50,12 @@ Client.prototype.getSlot = function (key) {
   }
   return hashSlot(key);
 };
+
+Client.prototype.getLink = function(key){
+    var node =  this.getNode(key);
+    console.log('Using node server ' + node.connectStr);
+    return this.getNode(key).link;
+}
 
 Client.prototype.getNode = function (key) {
   var self = this;
@@ -134,17 +140,17 @@ Client.prototype.discover = function (cb) {
     }
 
     numNodesToConnect = self.nodes.length;
-    for (var i = 0; i < numNodesToConnect; i++) {
-      var connStr = self.nodes[i].connectStr;
+    for (var j = 0; j < numNodesToConnect; j++) {
+      var connStr = self.nodes[j].connectStr;
       var conn = self.connection_cache[connStr];
       if (!conn) {
         conn = (self.connection_cache[connStr] = connectToLink(connStr, self));
-        self.nodes[i].link = conn;
+        self.nodes[j].link = conn;
         conn.on('ready', function () {
           checkReady();
         });
       } else {
-        self.nodes[i].link = conn;
+        self.nodes[j].link = conn;
         checkReady();
       }
     }
@@ -272,10 +278,23 @@ Client.prototype.bind = function() {
 };
 
 //Multi operation only support for the same slot
-Client.prototype.multi = function (key, args) {
-  var node = this.getNode(key);
-  console.log('Using node server ' + node.connectStr);
-  return node.link.multi.apply(node.link, args);
+Client.prototype.multi =function (key, args) {
+  var link = this.getLink(key);
+  return link.multi.apply(link, args);
+}
+
+Client.prototype.quit = function(){
+  var self=this;
+  var nodeLength = self.nodes.length;
+  for(var i = 0;i<nodeLength;i++){
+      var node = self.nodes[i];
+      node.link.quit();
+      node.link.on('end',function(){
+          console.log(this.connectStr +' connection ended');
+      })
+  }
+  self.nodes = [];
+  self.connection_cache = {}
 }
 
 function connectToLink(str, client, options) {
@@ -299,18 +318,21 @@ function connectToLink(str, client, options) {
     if (err && err.toString().indexOf("ECONNREFUSED") >= 0 && !client.reconnecting) {
       var retries = 0;
       var wait = base_wait;
+      var maxRetry = 3;
       recover();
     }
 
     function recover() {
-      setTimeout(function() {
-        client.connect(function (err) {
-          if (err) {
-            wait = Math.min(30000, base_wait * Math.pow(2, ++retries));
-            recover();
-          }
-        });
-      }, wait);
+      if(retries<=maxRetry) {
+        setTimeout(function () {
+          client.connect(function (err) {
+            if (err) {
+              wait = Math.min(30000, base_wait * Math.pow(2, ++retries));
+              recover();
+            }
+          });
+        }, wait)
+      }
     }
   }
 }

@@ -12,6 +12,6 @@
     },
     "repository": {
         "type": "git",
-        "url": "git@github.com:joaojeronimo/node_redis_cluster.git"
+        "url": "git@github.com:rystian/node_redis_cluster.git"
     }
 }

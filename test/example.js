@@ -1,4 +1,4 @@
-var rcluster = require('./index.js').clusterClient;
+var rcluster = require('./../index.js').clusterClient;
 
 new rcluster.clusterInstance('127.0.0.1:7001', function (err, r) {
 	if (err) throw err;
