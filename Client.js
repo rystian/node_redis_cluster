@@ -158,7 +158,11 @@ Client.prototype.discover = function (cb) {
 
     function checkReady() {
       numNodesReady++;
-      if (numNodesReady === numNodesToConnect) cb();
+      if (numNodesReady === numNodesToConnect) {
+          self.ready = true;
+          cb();
+      }
+
     }
 
   });
@@ -296,6 +300,21 @@ Client.prototype.quit = function(){
   }
   self.nodes = [];
   self.connection_cache = {}
+}
+
+/**
+ * Some hacky function, in order to make it compatible with node_redis
+ * It will return an actual connected client, defined by key property on options
+ * Hence only call this after all is ready!
+ * @param port
+ * @param host
+ * @param options
+ */
+Client.prototype.createClient = function(port, host, options){
+    if(this.ready) {
+        this.emit('ready');
+    }
+    return this;
 }
 
 function connectToLink(str, client, options) {
