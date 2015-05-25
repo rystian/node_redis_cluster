@@ -30,6 +30,7 @@ Client.prototype.connect = function (cb) {
   });
 
   function callback(err) {
+    self.emit('ready');
     var callbacks = self.onConnect;
     self.onConnect = null;
     callbacks.forEach(function(cb) {
@@ -157,10 +158,7 @@ Client.prototype.discover = function (cb) {
 
     function checkReady() {
       numNodesReady++;
-      if (numNodesReady === numNodesToConnect) {
-          self.emit('ready');
-          cb();
-      }
+      if (numNodesReady === numNodesToConnect) cb();
     }
 
   });

@@ -10,11 +10,7 @@ module.exports = {
       });
     },
     createClient : function(discovery_address) {
-        var client = new Client(discovery_address);
-        client.connect(function(err) {
-            if (err) throw new Error(err);
-            return client;
-        });
+        return new Client(discovery_address);
     }
   }
 };
