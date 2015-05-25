@@ -157,7 +157,10 @@ Client.prototype.discover = function (cb) {
 
     function checkReady() {
       numNodesReady++;
-      if (numNodesReady === numNodesToConnect) cb();
+      if (numNodesReady === numNodesToConnect) {
+          self.emit('ready');
+          cb();
+      }
     }
 
   });
