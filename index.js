@@ -8,6 +8,13 @@ module.exports = {
         if (err) return cb(err);
         cb(null, client);
       });
+    },
+    createClient : function(discovery_address) {
+        var client = new Client(discovery_address);
+        client.connect(function(err) {
+            if (err) throw new Error(err);
+            return client;
+        });
     }
   }
 };
