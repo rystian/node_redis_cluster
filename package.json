@@ -7,9 +7,6 @@
     "dependencies" : {
         "redis" : "0.8.x"
     },
-    "optionalDependencies": {
-        "redis-fast-driver": "*"
-    },
     "repository": {
         "type": "git",
         "url": "git@github.com:rystian/node_redis_cluster.git"

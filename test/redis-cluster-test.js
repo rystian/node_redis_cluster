@@ -35,7 +35,7 @@ client.clusterInstance('127.0.0.1:7000', function (err, conn) {
       }
       pclientMulti.exec(function (err) {
         if (err) console.log('error executing multi ' + err)
-          console.log('Dieded');
+          console.log('Dieded gracefully...');
           pclient.quit();
         })
     }).catch(function (err) {

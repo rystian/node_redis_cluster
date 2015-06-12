@@ -25,8 +25,7 @@ Client.prototype.connect = function (cb) {
   self.discover(function (err) {
     self.connecting = false;
     if (err) return callback(err);
-    self.bind();
-    callback();
+    self.bind(callback);
   });
 
   function callback(err) {
@@ -74,7 +73,7 @@ Client.prototype.getNode = function (key) {
 Client.prototype.discover = function (cb) {
   var self = this;
   self.nodes = [];
-  var numNodesReady = 0;
+
   var numNodesToConnect = 0;
   var fire_starter = connectToLink(self.discovery_address, self);
 
@@ -131,154 +130,158 @@ Client.prototype.discover = function (cb) {
           slots.push(Number(t[0]), Number(t[1]));
         }
 
-      self.nodes.push({
-        name: name,
-        connectStr: link,
-        link: {},
-        slots: slots
-      });
-    }
-    }
-
-    numNodesToConnect = self.nodes.length;
-    for (var j = 0; j < numNodesToConnect; j++) {
-      var connStr = self.nodes[j].connectStr;
-      var conn = self.connection_cache[connStr];
-      if (!conn) {
-        conn = (self.connection_cache[connStr] = connectToLink(connStr, self));
-        self.nodes[j].link = conn;
-        conn.on('ready', function () {
-          checkReady();
+        self.nodes.push({
+          name: name,
+          connectStr: link,
+          link: {},
+          slots: slots
         });
-      } else {
-        self.nodes[j].link = conn;
-        checkReady();
       }
     }
-
-    function checkReady() {
-      numNodesReady++;
-      if (numNodesReady === numNodesToConnect) {
-          self.ready = true;
-          cb();
-      }
-
-    }
-
+    cb();
   });
 };
 
-Client.prototype.bind = function() {
+Client.prototype.bind = function (cb) {
   var self = this;
-  var c = commands.length;
-  while (c--) {
-    (function (command) {
-      if (command === "multi" || command === "exec") {
-        return;
-      }
-      self[command] = function () {
-        var o_arguments = Array.prototype.slice.call(arguments);
-        var orig_arguments = Array.prototype.slice.call(arguments);
-        var o_callback;
-        var last_used_node;
-        var redirections = 0;
+  var numNodesToConnect = self.nodes.length;
+  var numNodesReady = 0;
+  for (var j = 0; j < numNodesToConnect; j++) {
+    var connStr = self.nodes[j].connectStr;
+    var conn = self.connection_cache[connStr];
+    if (!conn) {
+      conn = (self.connection_cache[connStr] = connectToLink(connStr, self));
+      self.nodes[j].link = conn;
+      conn.on('ready', function () {
+        checkReady();
+      });
+    } else {
+      self.nodes[j].link = conn;
+      checkReady();
+    }
+  }
 
-        // Taken from code in node-redis.
-        var last_arg_type = typeof o_arguments[o_arguments.length - 1];
-        if (last_arg_type === 'function') {
-          o_callback = o_arguments.pop();
+  function checkReady() {
+    numNodesReady++;
+    if (numNodesReady === numNodesToConnect) {
+      self.ready = true;
+      bindCommands(cb);
+    }
+  }
+
+  function bindCommands(cb) {
+    var c = commands.length;
+    while (c--) {
+      (function (command) {
+        if (command === "multi" || command === "exec") {
+          return;
         }
+        self[command] = function () {
+          var o_arguments = Array.prototype.slice.call(arguments);
+          var orig_arguments = Array.prototype.slice.call(arguments);
+          var o_callback;
+          var last_used_node;
+          var redirections = 0;
 
-        //for commands such as PING use slot 0
-        var slot = o_arguments[0] ? hashSlot(o_arguments[0]) : 0;
-
-        var i = self.nodes.length;
-        while (i--) {
-          var node = self.nodes[i];
-          var slots = node.slots;
-          for(var r=0;r<slots.length;r+=2) {
-            if ((slot >= slots[r]) && (slot <= slots[r+1])) {
-              callNode(node);
-              return;
-            }
+          // Taken from code in node-redis.
+          var last_arg_type = typeof o_arguments[o_arguments.length - 1];
+          if (last_arg_type === 'function') {
+            o_callback = o_arguments.pop();
           }
-        }
 
-        if (o_callback)
-          o_callback(new Error('slot '+slot+' found on no nodes'));
+          //for commands such as PING use slot 0
+          var slot = o_arguments[0] ? hashSlot(o_arguments[0]) : 0;
 
-        // unable to find node for slot so we reconnect
-        self.connect(function(err) {
-          if (err) {
-            self.emit('error', err);
-          }
-        });
-
-        function callNode(node) {
-          last_used_node = node;
-          try {
-            node.link[command].apply(node.link, o_arguments.concat([callback]));
-          } catch (e) {
-            console.error('error sending command to link');
-            console.error(e);
-          }
-        }
-
-        function callback(err, data){
-          if(err) {
-            // Need to handle here errors '-ASK' and '-MOVED'
-            // http://redis.io/topics/cluster-spec
-
-            // ASK error example: ASK 12182 127.0.0.1:7001
-            // When we got ASK error, we need just repeat a request on right node with ASKING command
-            // If after ASK we got MOVED err, thats mean no key found
-            if (err.toString().substr(7, 3) === 'ASK') {
-              if(redirections++ > 5) {
-                if(o_callback)
-                  o_callback(new Error('Too much redirections'));
+          var i = self.nodes.length;
+          while (i--) {
+            var node = self.nodes[i];
+            var slots = node.slots;
+            for (var r = 0; r < slots.length; r += 2) {
+              if ((slot >= slots[r]) && (slot <= slots[r + 1])) {
+                callNode(node);
                 return;
               }
-              //console.log('ASK redirection')
-              var connectStr = err.split(' ')[2];
-              var node = null;
-              for(var i=0;i<self.nodes.length;i++) {
-                if(self.nodes[i].connectStr === connectStr) {
-                  node = self.nodes[i];
-                  break;
-                }
-              }
-              if(node) {
-                try {
-                  node.link.send_command('ASKING', [], function(){});
-                } catch (e) {
-                  console.error('error asking link');
-                  console.error(e);
-                }
-                return callNode(node, true);
-              }
-              if(o_callback)
-                o_callback(new Error('Requested node for redirection not found `' + connectStr + '`'));
-              return;
-            } else if (err.toString().substr(7, 5) === 'MOVED') {
-              //MOVED error example: MOVED 12182 127.0.0.1:7002
-              //this is our trigger when cluster topology is changed
-              self.connect(function(err) {
-                if (err) {
-                  if (o_callback)
-                    o_callback(err);
-                  return;
-                }
-                //repeat command
-                self[command].apply(self, orig_arguments);
-              });
-              return;
             }
           }
-          if(o_callback)
-            o_callback(err, data);
-        }
-      };
-    })(commands[c]);
+
+          if (o_callback)
+            o_callback(new Error('slot ' + slot + ' found on no nodes'));
+
+          // unable to find node for slot so we reconnect
+          self.connect(function (err) {
+            if (err) {
+              self.emit('error', err);
+            }
+          });
+
+          function callNode(node) {
+            last_used_node = node;
+            try {
+              node.link[command].apply(node.link, o_arguments.concat([callback]));
+            } catch (e) {
+              console.error('error sending command to link');
+              console.error(e);
+            }
+          }
+
+          function callback(err, data) {
+            if (err) {
+              // Need to handle here errors '-ASK' and '-MOVED'
+              // http://redis.io/topics/cluster-spec
+
+              // ASK error example: ASK 12182 127.0.0.1:7001
+              // When we got ASK error, we need just repeat a request on right node with ASKING command
+              // If after ASK we got MOVED err, thats mean no key found
+              if (err.toString().substr(7, 3) === 'ASK') {
+                if (redirections++ > 5) {
+                  if (o_callback)
+                    o_callback(new Error('Too much redirections'));
+                  return;
+                }
+                //console.log('ASK redirection')
+                var connectStr = err.split(' ')[2];
+                var node = null;
+                for (var i = 0; i < self.nodes.length; i++) {
+                  if (self.nodes[i].connectStr === connectStr) {
+                    node = self.nodes[i];
+                    break;
+                  }
+                }
+                if (node) {
+                  try {
+                    node.link.send_command('ASKING', [], function () {
+                    });
+                  } catch (e) {
+                    console.error('error asking link');
+                    console.error(e);
+                  }
+                  return callNode(node, true);
+                }
+                if (o_callback)
+                  o_callback(new Error('Requested node for redirection not found `' + connectStr + '`'));
+                return;
+              } else if (err.toString().substr(7, 5) === 'MOVED') {
+                //MOVED error example: MOVED 12182 127.0.0.1:7002
+                //this is our trigger when cluster topology is changed
+                self.connect(function (err) {
+                  if (err) {
+                    if (o_callback)
+                      o_callback(err);
+                    return;
+                  }
+                  //repeat command
+                  self[command].apply(self, orig_arguments);
+                });
+                return;
+              }
+            }
+            if (o_callback)
+              o_callback(err, data);
+          }
+        };
+      })(commands[c]);
+    }
+    cb();
   }
 };
 
@@ -303,19 +306,31 @@ Client.prototype.quit = function(){
 }
 
 /**
- * Some hacky function, in order to make it compatible with node_redis
- * It will return an actual connected client, defined by key property on options
+ * Some hacky functions, in order to keep it compatible with node_redis
+ */
+
+/** It will return an actual connected client, defined by key property on options
  * Hence only call this after all is ready!
  * @param port
  * @param host
  * @param options
- */
+
 Client.prototype.createClient = function(port, host, options){
+    var self = this;
     if(this.ready) {
+        var link = self.nodes[0].link;
+        this.server_info = link.server_info;
+        this.retry_backoff = link.retry_backoff;
+        this.retry_delay = link.retry_delay;
+        this.client = link.client;
+        this.send_command = function(){
+            link.send_command.apply(link,arguments);
+        }
         this.emit('ready');
     }
     return this;
 }
+/** end hacky functions **/
 
 function connectToLink(str, client, options) {
   var spl = str.split(':');
